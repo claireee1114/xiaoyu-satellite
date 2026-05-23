@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>小鱼的卫星</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section id="loginView" class="login-band">
+        <div class="login-panel">
+          <div class="brand-mark" aria-hidden="true">鱼</div>
+          <h1>小鱼的卫星</h1>
+          <form id="loginForm" class="login-form">
+            <label>
+              邮箱
+              <input id="emailInput" type="email" autocomplete="email" placeholder="admin@xiaoyu.space" required />
+            </label>
+            <label>
+              密码
+              <input id="passwordInput" type="password" autocomplete="current-password" placeholder="管理者密码" required />
+            </label>
+            <button type="submit">登录</button>
+            <p id="loginError" class="form-error" role="alert"></p>
+          </form>
+        </div>
+      </section>
+
+      <section id="homeView" class="home is-hidden">
+        <header class="topbar">
+          <div>
+            <span class="eyebrow">私人足迹</span>
+            <h1>小鱼的卫星</h1>
+          </div>
+          <div class="topbar-actions">
+            <button id="seedButton" class="ghost-button" type="button">示例</button>
+            <button id="logoutButton" class="icon-button" type="button" aria-label="退出登录" title="退出登录">↗</button>
+          </div>
+        </header>
+
+        <section class="composer-band" aria-label="新增足迹">
+          <form id="entryForm" class="composer">
+            <div class="form-grid">
+              <label>
+                撰写时间
+                <input id="entryDate" type="datetime-local" required />
+              </label>
+              <label>
+                类型
+                <select id="entryType">
+                  <option value="text">文字</option>
+                  <option value="image">图片文字</option>
+                </select>
+              </label>
+            </div>
+
+            <label>
+              标题
+              <input id="entryTitle" type="text" maxlength="42" placeholder="给这条足迹一个名字" required />
+            </label>
+
+            <label id="imageUploadWrap" class="file-wrap is-hidden">
+              图片
+              <input id="imageInput" type="file" accept="image/*" />
+              <span id="fileName">选择图片</span>
+            </label>
+
+            <label>
+              内容
+              <textarea id="entryContent" rows="7" placeholder="粘贴文字，或填写图片中的文字" required></textarea>
+            </label>
+
+            <div class="composer-footer">
+              <p id="entryHint" class="hint"></p>
+              <button type="submit">保存足迹</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="control-row" aria-label="视图控制">
+          <div class="stat">
+            <strong id="entryCount">0</strong>
+            <span>条足迹</span>
+          </div>
+          <div class="segmented" role="group" aria-label="排序">
+            <button id="sortDesc" class="is-active" type="button">最新</button>
+            <button id="sortAsc" type="button">最早</button>
+          </div>
+        </section>
+
+        <section id="cloudSection" class="all-cloud" aria-label="全部文字词云">
+          <div class="cloud-heading">
+            <h2>全部文字词云</h2>
+            <span id="cloudCount">0 个关键词</span>
+          </div>
+          <div id="cloudCanvas" class="cloud-canvas"></div>
+        </section>
+
+        <section class="timeline-band">
+          <ol id="timeline" class="timeline"></ol>
+          <div id="emptyState" class="empty-state">
+            <h2>还没有足迹</h2>
+            <p>上传第一段文字，词云会在足迹上方出现。</p>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <template id="entryTemplate">
+      <li class="entry-card">
+        <article>
+          <div class="entry-meta">
+            <time></time>
+            <span class="entry-type"></span>
+          </div>
+          <h2></h2>
+          <img class="entry-image" alt="" />
+          <p class="entry-text"></p>
+          <div class="keyword-list"></div>
+        </article>
+      </li>
+    </template>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

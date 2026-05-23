@@ -1,7 +1,27 @@
-const STORAGE_KEY = "footprint-cloud.entries";
-const SESSION_KEY = "footprint-cloud.session";
-const ADMIN_EMAIL = "admin@xiaoyu.space";
-const ADMIN_PASSWORD = "xiaoyu2026";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import {
+  getAuth,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+import {
+  addDoc,
+  collection,
+  getFirestore,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  Timestamp
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+import {
+  getDownloadURL,
+  getStorage,
+  ref,
+  uploadBytes
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
+import { ADMIN_EMAIL, STORAGE_FOLDER, firebaseConfig } from "./firebase-config.js";
 
 const stopWords = new Set([
   "一个", "一些", "一种", "这个", "那个", "我们", "你们", "他们", "它们", "自己", "今天", "昨天",
@@ -13,9 +33,11 @@ const stopWords = new Set([
 const palette = ["#344a41", "#c65f4a", "#3f6f8f", "#b4872d", "#627b6d", "#684a7a"];
 
 const state = {
+  appReady: !firebaseConfig.apiKey.includes("PASTE_"),
   entries: [],
   sort: "desc",
-  pendingImage: ""
+  pendingFile: null,
+  unsubscribeEntries: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -37,42 +59,49 @@ const cloudSection = $("#cloudSection");
 const cloudCanvas = $("#cloudCanvas");
 const cloudCount = $("#cloudCount");
 
-function loadEntries() {
-  try {
-    state.entries = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-  } catch {
-    state.entries = [];
-  }
-}
+let auth;
+let db;
+let storage;
 
-function saveEntries() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.entries));
-}
-
-function isLoggedIn() {
-  return localStorage.getItem(SESSION_KEY) === "active";
-}
-
-function setLoggedIn(value) {
-  if (value) {
-    localStorage.setItem(SESSION_KEY, "active");
-  } else {
-    localStorage.removeItem(SESSION_KEY);
-  }
-  renderShell();
-}
-
-function renderShell() {
-  const loggedIn = isLoggedIn();
-  loginView.classList.toggle("is-hidden", loggedIn);
-  homeView.classList.toggle("is-hidden", !loggedIn);
-  if (loggedIn) renderTimeline();
+if (state.appReady) {
+  const app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+  storage = getStorage(app);
+} else {
+  loginError.textContent = "请先填写 firebase-config.js 里的 Firebase 配置";
 }
 
 function setDefaultDate() {
   const now = new Date();
   now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
   $("#entryDate").value = now.toISOString().slice(0, 16);
+}
+
+function toDate(value) {
+  if (value instanceof Timestamp) return value.toDate();
+  if (value?.toDate) return value.toDate();
+  return new Date(value);
+}
+
+function toDatetimeLocal(value) {
+  const date = toDate(value);
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 16);
+}
+
+function fromFirestore(doc) {
+  const data = doc.data();
+  const writtenAt = data.writtenAt || data.written_at || new Date();
+  return {
+    id: doc.id,
+    title: data.title || "",
+    content: data.content || "",
+    date: toDatetimeLocal(writtenAt),
+    type: data.type || "text",
+    image: data.imageUrl || data.image_url || "",
+    createdAt: data.createdAt || data.created_at || null
+  };
 }
 
 function tokenize(text) {
@@ -197,53 +226,112 @@ function renderTimeline() {
   cloudCanvas.innerHTML = makeCloud(words);
 }
 
-function addSampleEntries() {
+function renderShell(user) {
+  const loggedIn = Boolean(user);
+  loginView.classList.toggle("is-hidden", loggedIn);
+  homeView.classList.toggle("is-hidden", !loggedIn);
+  if (!loggedIn) {
+    if (state.unsubscribeEntries) state.unsubscribeEntries();
+    state.unsubscribeEntries = null;
+    state.entries = [];
+    renderTimeline();
+  }
+}
+
+function listenForEntries() {
+  if (state.unsubscribeEntries) state.unsubscribeEntries();
+  const entriesQuery = query(collection(db, "footprints"), orderBy("writtenAt", "desc"));
+  state.unsubscribeEntries = onSnapshot(
+    entriesQuery,
+    (snapshot) => {
+      state.entries = snapshot.docs.map(fromFirestore);
+      renderTimeline();
+    },
+    (error) => {
+      entryHint.textContent = `读取失败：${error.message}`;
+    }
+  );
+}
+
+function setSubmitting(isSubmitting) {
+  const button = entryForm.querySelector('button[type="submit"]');
+  button.disabled = isSubmitting;
+  button.textContent = isSubmitting ? "保存中..." : "保存足迹";
+}
+
+function getSafeFileName(file) {
+  const extension = file.name.includes(".") ? file.name.split(".").pop().toLowerCase() : "jpg";
+  return `${crypto.randomUUID()}.${extension.replace(/[^a-z0-9]/g, "") || "jpg"}`;
+}
+
+async function uploadImage(file) {
+  const imageRef = ref(storage, `${STORAGE_FOLDER}/${getSafeFileName(file)}`);
+  await uploadBytes(imageRef, file);
+  return getDownloadURL(imageRef);
+}
+
+async function addSampleEntries() {
   const samples = [
     {
       title: "清晨读书",
       content: "清晨读完一章关于城市记忆的文章，里面提到步行、旧街区、树影和人的节奏。记录这些细小的移动，像是在给生活留下一串温柔坐标。",
-      date: "2026-05-21T08:30",
-      type: "text"
+      writtenAt: Timestamp.fromDate(new Date("2026-05-21T08:30:00")),
+      type: "text",
+      imageUrl: ""
     },
     {
       title: "展览手写牌",
       content: "展览入口的手写牌写着时间、材料、光线和空间。最打动我的是纸张边缘留下的褶皱，像一段没有被抹平的现场。",
-      date: "2026-05-19T15:10",
-      type: "image"
+      writtenAt: Timestamp.fromDate(new Date("2026-05-19T15:10:00")),
+      type: "image",
+      imageUrl: ""
     },
     {
       title: "项目复盘",
       content: "下午复盘产品流程，关键词集中在上传、识别、隐私、检索、时间线和可视化。下一步要让记录更轻，也让回看更有方向。",
-      date: "2026-05-15T18:20",
-      type: "text"
+      writtenAt: Timestamp.fromDate(new Date("2026-05-15T18:20:00")),
+      type: "text",
+      imageUrl: ""
     }
   ];
 
-  state.entries = samples.map((sample) => ({
-    id: crypto.randomUUID(),
-    image: "",
-    createdAt: new Date().toISOString(),
-    ...sample
-  }));
-  saveEntries();
-  renderTimeline();
+  await Promise.all(samples.map((sample) => addDoc(collection(db, "footprints"), {
+    ...sample,
+    createdAt: serverTimestamp()
+  })));
 }
 
-loginForm.addEventListener("submit", (event) => {
+loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const email = $("#emailInput").value.trim();
-  const password = $("#passwordInput").value;
-  if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
-    loginError.textContent = "账号或密码不正确";
+  if (!state.appReady) {
+    loginError.textContent = "请先填写 firebase-config.js 里的 Firebase 配置";
     return;
   }
+
+  const email = $("#emailInput").value.trim();
+  const password = $("#passwordInput").value;
   loginError.textContent = "";
-  setLoggedIn(true);
+
+  try {
+    await signInWithEmailAndPassword(auth, email, password);
+  } catch {
+    loginError.textContent = "账号或密码不正确";
+  }
 });
 
-$("#logoutButton").addEventListener("click", () => setLoggedIn(false));
+$("#logoutButton").addEventListener("click", async () => {
+  await signOut(auth);
+});
 
-$("#seedButton").addEventListener("click", addSampleEntries);
+$("#seedButton").addEventListener("click", async () => {
+  try {
+    entryHint.textContent = "正在加入示例...";
+    await addSampleEntries();
+    entryHint.textContent = "";
+  } catch (error) {
+    entryHint.textContent = `示例写入失败：${error.message}`;
+  }
+});
 
 entryType.addEventListener("change", () => {
   const isImage = entryType.value === "image";
@@ -254,16 +342,11 @@ entryType.addEventListener("change", () => {
 
 imageInput.addEventListener("change", () => {
   const file = imageInput.files[0];
-  if (!file) return;
-  fileName.textContent = file.name;
-  const reader = new FileReader();
-  reader.onload = () => {
-    state.pendingImage = reader.result;
-  };
-  reader.readAsDataURL(file);
+  state.pendingFile = file || null;
+  fileName.textContent = file ? file.name : "选择图片";
 });
 
-entryForm.addEventListener("submit", (event) => {
+entryForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const title = $("#entryTitle").value.trim();
   const content = $("#entryContent").value.trim();
@@ -275,29 +358,36 @@ entryForm.addEventListener("submit", (event) => {
     return;
   }
 
-  if (type === "image" && !state.pendingImage) {
-    entryHint.textContent = "请先选择图片，并等待图片载入完成";
+  if (type === "image" && !state.pendingFile) {
+    entryHint.textContent = "请先选择图片";
     return;
   }
 
-  state.entries.push({
-    id: crypto.randomUUID(),
-    title,
-    content,
-    date,
-    type,
-    image: type === "image" ? state.pendingImage : "",
-    createdAt: new Date().toISOString()
-  });
-
-  saveEntries();
-  entryForm.reset();
-  state.pendingImage = "";
-  fileName.textContent = "选择图片";
-  imageUploadWrap.classList.add("is-hidden");
+  setSubmitting(true);
   entryHint.textContent = "";
-  setDefaultDate();
-  renderTimeline();
+
+  try {
+    const imageUrl = type === "image" ? await uploadImage(state.pendingFile) : "";
+    await addDoc(collection(db, "footprints"), {
+      title,
+      content,
+      type,
+      imageUrl,
+      writtenAt: Timestamp.fromDate(new Date(date)),
+      createdAt: serverTimestamp()
+    });
+
+    entryForm.reset();
+    state.pendingFile = null;
+    fileName.textContent = "选择图片";
+    imageUploadWrap.classList.add("is-hidden");
+    imageInput.required = false;
+    setDefaultDate();
+  } catch (error) {
+    entryHint.textContent = `保存失败：${error.message}`;
+  } finally {
+    setSubmitting(false);
+  }
 });
 
 $("#sortDesc").addEventListener("click", () => {
@@ -314,6 +404,18 @@ $("#sortAsc").addEventListener("click", () => {
   renderTimeline();
 });
 
-loadEntries();
 setDefaultDate();
-renderShell();
+renderTimeline();
+
+if (state.appReady) {
+  onAuthStateChanged(auth, async (user) => {
+    if (user && user.email !== ADMIN_EMAIL) {
+      loginError.textContent = "当前账号不是管理者账号";
+      await signOut(auth);
+      return;
+    }
+
+    renderShell(user);
+    if (user) listenForEntries();
+  });
+}

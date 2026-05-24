@@ -60,7 +60,94 @@ ADMIN_PASSWORD=你自己的强密码
 NODE_ENV=production
 ```
 
-### 4. 设置数据保存位置
+### 4. 永久保存数据和图片，推荐 Supabase 免费版
+
+Render 免费版的本地文件不会永久保存。服务休眠、重启、重新部署后，本地 `data` 文件夹可能消失。
+
+如果不想升级 Render，又想长期保存，请用 Supabase 免费版保存数据库和图片。
+
+#### 4.1 创建 Supabase 项目
+
+1. 打开 Supabase。
+2. 新建 Project。
+3. 进入 Project 后，打开 SQL Editor。
+4. 新建 query，粘贴并运行：
+
+```sql
+create table if not exists public.footprints (
+  id text primary key,
+  written_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  content text not null,
+  image_path text,
+  keywords jsonb not null default '[]'::jsonb
+);
+
+create index if not exists footprints_written_at_idx
+on public.footprints (written_at desc);
+```
+
+#### 4.2 创建图片存储 bucket
+
+1. 打开 Storage。
+2. New bucket。
+3. Bucket name 填：
+
+```text
+footprints
+```
+
+4. Public bucket 不要打开，保持私有。
+
+#### 4.3 复制 Supabase 密钥
+
+在 Supabase 打开：
+
+```text
+Project Settings -> API
+```
+
+复制：
+
+```text
+Project URL
+service_role key
+```
+
+#### 4.4 在 Render 添加环境变量
+
+回到 Render 的 Environment Variables，添加：
+
+```text
+SUPABASE_URL=你的 Supabase Project URL
+SUPABASE_SERVICE_ROLE_KEY=你的 Supabase service_role key
+SUPABASE_BUCKET=footprints
+```
+
+保留原来的：
+
+```text
+ADMIN_PASSWORD=你自己的强密码
+NODE_ENV=production
+```
+
+然后重新 Deploy。
+
+部署完成后打开：
+
+```text
+https://你的 Render 地址/healthz
+```
+
+如果配置成功，Render 日志里会显示：
+
+```text
+Storage: Supabase
+```
+
+之后再上传的文字和图片会保存在 Supabase，不会因为 Render 免费版休眠而消失。
+
+### 5. Render Disk 方案，只有升级时才推荐
 
 为了让上传内容和图片在重启后不丢失，需要添加一个 Disk：
 
@@ -75,7 +162,7 @@ Size: 1 GB
 DATA_DIR=/var/data
 ```
 
-### 5. Deploy
+### 6. Deploy
 
 点击 Deploy。部署完成后，Render 会给你一个网址。
 

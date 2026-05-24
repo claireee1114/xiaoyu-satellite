@@ -13,6 +13,10 @@ const DATA_DIR = resolve(process.env.DATA_DIR || "data");
 const UPLOAD_DIR = join(DATA_DIR, "uploads");
 const DB_FILE = join(DATA_DIR, "footprints.json");
 const PUBLIC_DIR = resolve(ROOT_DIR, "public");
+const SUPABASE_URL = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || "footprints";
+const USE_SUPABASE = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
 const sessions = new Set();
 const clients = new Set();
 
@@ -77,12 +81,83 @@ function isAuthed(req) {
 }
 
 async function readFootprints() {
+  if (USE_SUPABASE) {
+    const rows = await supabaseRequest("/rest/v1/footprints?select=*&order=written_at.desc");
+    return rows.map(fromSupabaseRow);
+  }
   const raw = await readFile(DB_FILE, "utf8");
   return JSON.parse(raw || "[]");
 }
 
 async function writeFootprints(items) {
+  if (USE_SUPABASE) return;
   await writeFile(DB_FILE, JSON.stringify(items, null, 2), "utf8");
+}
+
+async function createFootprint(item) {
+  if (!USE_SUPABASE) {
+    const items = await readFootprints();
+    items.push(item);
+    await writeFootprints(items);
+    return item;
+  }
+  const rows = await supabaseRequest("/rest/v1/footprints", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(toSupabaseRow(item))
+  });
+  return fromSupabaseRow(rows[0]);
+}
+
+async function deleteFootprint(id) {
+  if (!USE_SUPABASE) {
+    const items = await readFootprints();
+    await writeFootprints(items.filter((item) => item.id !== id));
+    return;
+  }
+  await supabaseRequest(`/rest/v1/footprints?id=eq.${encodeURIComponent(id)}`, {
+    method: "DELETE"
+  });
+}
+
+async function supabaseRequest(path, options = {}) {
+  const response = await fetch(`${SUPABASE_URL}${path}`, {
+    ...options,
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+      ...(options.headers || {})
+    }
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    throw new Error(data?.message || data?.error || "Supabase request failed");
+  }
+  return data;
+}
+
+function toSupabaseRow(item) {
+  return {
+    id: item.id,
+    written_at: item.writtenAt,
+    created_at: item.createdAt,
+    content: item.content,
+    image_path: item.imageUrl?.replace("/uploads/", "") || null,
+    keywords: item.keywords || []
+  };
+}
+
+function fromSupabaseRow(row) {
+  return {
+    id: row.id,
+    writtenAt: row.written_at,
+    createdAt: row.created_at,
+    content: row.content,
+    imageUrl: row.image_path ? `/uploads/${row.image_path}` : null,
+    keywords: row.keywords || []
+  };
 }
 
 function broadcast(payload) {
@@ -164,8 +239,47 @@ async function saveImage(dataUrl) {
   const bytes = Buffer.from(match[2], "base64");
   if (bytes.length > 8_000_000) throw new Error("Image must be smaller than 8MB");
   const filename = `${Date.now()}-${randomBytes(6).toString("hex")}.${extension}`;
+  if (USE_SUPABASE) {
+    await uploadSupabaseImage(filename, bytes, match[1]);
+    return `/uploads/${filename}`;
+  }
   await writeFile(join(UPLOAD_DIR, filename), bytes);
   return `/uploads/${filename}`;
+}
+
+async function uploadSupabaseImage(filename, bytes, contentType) {
+  const response = await fetch(`${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${filename}`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      "Content-Type": contentType,
+      "x-upsert": "false"
+    },
+    body: bytes
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Image upload failed");
+  }
+}
+
+async function serveSupabaseImage(req, res, pathname) {
+  if (!isAuthed(req)) return send(res, 401, "请先登录");
+  const filename = pathname.replace("/uploads/", "");
+  const response = await fetch(`${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${encodeURIComponent(filename)}`, {
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+    }
+  });
+  if (!response.ok) return send(res, response.status, "Not found");
+  const bytes = Buffer.from(await response.arrayBuffer());
+  res.writeHead(200, {
+    "Content-Type": response.headers.get("content-type") || "application/octet-stream",
+    "Content-Length": bytes.length
+  });
+  res.end(bytes);
 }
 
 async function getState() {
@@ -176,6 +290,9 @@ async function getState() {
 async function serveStatic(req, res, pathname) {
   if (pathname.startsWith("/uploads/") && !isAuthed(req)) {
     return send(res, 401, "请先登录");
+  }
+  if (pathname.startsWith("/uploads/") && USE_SUPABASE) {
+    return serveSupabaseImage(req, res, pathname);
   }
   let filePath = pathname === "/" ? join(PUBLIC_DIR, "index.html") : join(PUBLIC_DIR, pathname);
   if (pathname.startsWith("/uploads/")) {
@@ -268,9 +385,7 @@ const server = createServer(async (req, res) => {
         imageUrl,
         keywords: extractKeywords(content)
       };
-      const items = await readFootprints();
-      items.push(item);
-      await writeFootprints(items);
+      await createFootprint(item);
       const state = await getState();
       broadcast(state);
       return send(res, 201, item);
@@ -278,9 +393,7 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "DELETE" && pathname.startsWith("/api/footprints/")) {
       const id = pathname.split("/").pop();
-      const items = await readFootprints();
-      const nextItems = items.filter((item) => item.id !== id);
-      await writeFootprints(nextItems);
+      await deleteFootprint(id);
       const state = await getState();
       broadcast(state);
       return send(res, 200, { ok: true });
@@ -298,6 +411,7 @@ server.listen(PORT, HOST, () => {
   console.log(`Footprints app running on http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
   console.log(`Public directory: ${PUBLIC_DIR}`);
   console.log(`Index exists: ${existsSync(join(PUBLIC_DIR, "index.html"))}`);
+  console.log(`Storage: ${USE_SUPABASE ? "Supabase" : "local file"}`);
   if (ADMIN_PASSWORD === "change-me-now") {
     console.log("Set ADMIN_PASSWORD before going live. Current local password is change-me-now");
   }

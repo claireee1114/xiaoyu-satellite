@@ -229,12 +229,9 @@ textarea:focus {
 }
 
 .word-cloud {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  min-height: 190px;
-  gap: 8px 16px;
+  position: relative;
+  min-height: 300px;
+  overflow: hidden;
   padding: 20px;
   border: 1px dashed #c8d0c2;
   border-radius: 8px;
@@ -242,12 +239,26 @@ textarea:focus {
 }
 
 .word-cloud.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--muted);
 }
 
 .cloud-word {
+  position: absolute;
+  max-width: 42%;
+  text-align: center;
+  overflow-wrap: anywhere;
   line-height: 1;
   font-weight: 900;
+  text-shadow: 0 2px 14px rgba(255, 255, 255, 0.72);
+  user-select: none;
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+
+.cloud-word:hover {
+  opacity: 1 !important;
 }
 
 .composer {
@@ -389,5 +400,13 @@ textarea:focus {
   .timeline-section,
   .login-panel {
     padding: 18px;
+  }
+
+  .word-cloud {
+    min-height: 260px;
+  }
+
+  .cloud-word {
+    max-width: 50%;
   }
 }

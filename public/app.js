@@ -86,13 +86,31 @@ function renderWordCloud(words) {
   for (const [index, word] of words.entries()) {
     const span = document.createElement("span");
     const ratio = max === min ? 0.5 : (word.weight - min) / (max - min);
+    const position = getCloudPosition(index, words.length);
     span.className = "cloud-word";
     span.textContent = word.text;
-    span.style.fontSize = `${0.95 + ratio * 2.25}rem`;
+    span.style.fontSize = `${0.8 + ratio * 3.1}rem`;
     span.style.color = palette[index % palette.length];
     span.style.opacity = `${0.72 + ratio * 0.28}`;
+    span.style.left = `${position.x}%`;
+    span.style.top = `${position.y}%`;
+    span.style.transform = `translate(-50%, -50%) rotate(${position.rotate}deg)`;
+    span.style.zIndex = `${words.length - index}`;
     wordCloud.append(span);
   }
+}
+
+function getCloudPosition(index, total) {
+  if (index === 0) return { x: 50, y: 50, rotate: 0 };
+  const angle = index * 2.399963;
+  const progress = Math.sqrt(index / Math.max(total - 1, 1));
+  const horizontalRadius = 42 * progress;
+  const verticalRadius = 34 * progress;
+  return {
+    x: 50 + Math.cos(angle) * horizontalRadius,
+    y: 50 + Math.sin(angle) * verticalRadius,
+    rotate: index % 5 === 0 ? -8 : index % 4 === 0 ? 7 : 0
+  };
 }
 
 function renderTimeline(items) {

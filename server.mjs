@@ -98,15 +98,24 @@ function clampText(value, max = 200_000) {
 
 function extractKeywords(text, max = 12) {
   const stopWords = new Set([
-    "the", "and", "for", "with", "that", "this", "from", "are", "was", "were", "you", "your", "have", "has",
-    "一个", "我们", "你们", "他们", "以及", "因为", "所以", "但是", "如果", "这个", "那个", "这些", "那些", "可以",
-    "进行", "通过", "关于", "没有", "不是", "自己", "已经", "时候", "需要", "就是", "还是", "或者", "然后"
+    "the", "and", "for", "with", "that", "this", "from", "are", "was", "were", "you", "your", "yours", "have", "has",
+    "had", "will", "would", "could", "should", "about", "into", "onto", "than", "then", "there", "here", "know",
+    "unknown", "once", "every", "each", "time", "again", "also", "because", "but", "not", "can", "cannot",
+    "我", "你", "他", "她", "它", "俺", "咱", "您", "人家", "我们", "你们", "他们", "她们", "它们", "咱们",
+    "我的", "你的", "他的", "她的", "它的", "我们的", "你们的", "他们的", "自己", "本人", "大家", "别人",
+    "和", "与", "及", "或", "并", "且", "而", "同", "跟", "把", "被", "对", "给", "在", "从", "到", "向",
+    "一个", "一种", "一些", "一点", "一下", "以及", "还有", "因为", "所以", "但是", "如果", "虽然", "只是",
+    "这个", "那个", "这些", "那些", "这里", "那里", "这样", "那样", "什么", "怎么", "为什么", "可以",
+    "进行", "通过", "关于", "没有", "不是", "还是", "或者", "然后", "并且", "而且", "就是", "只是",
+    "知道", "不知", "不知道", "觉得", "感觉", "认为", "一次", "每次", "时候", "需要", "已经", "可能",
+    "应该", "还是", "其实", "非常", "比较", "特别", "真的", "现在", "今天", "明天", "昨天", "很多",
+    "东西", "事情", "问题", "内容", "文字"
   ]);
   const counts = new Map();
   const normalized = text.toLowerCase();
   const englishWords = normalized.match(/[a-z0-9][a-z0-9-]{2,}/g) || [];
   for (const word of englishWords) {
-    if (!stopWords.has(word)) counts.set(word, (counts.get(word) || 0) + 1);
+    if (!isStopWord(word, stopWords)) counts.set(word, (counts.get(word) || 0) + 1);
   }
 
   const chineseRuns = normalized.match(/[\u4e00-\u9fff]{2,}/g) || [];
@@ -114,7 +123,7 @@ function extractKeywords(text, max = 12) {
     for (let size = 2; size <= 4; size += 1) {
       for (let index = 0; index <= run.length - size; index += 1) {
         const token = run.slice(index, index + size);
-        if (!stopWords.has(token)) counts.set(token, (counts.get(token) || 0) + (size === 2 ? 1 : 1.4));
+        if (!isStopWord(token, stopWords)) counts.set(token, (counts.get(token) || 0) + (size === 2 ? 1 : 1.4));
       }
     }
   }
@@ -123,6 +132,15 @@ function extractKeywords(text, max = 12) {
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, max)
     .map(([textValue, weight]) => ({ text: textValue, weight: Number(weight.toFixed(2)) }));
+}
+
+function isStopWord(token, stopWords) {
+  if (stopWords.has(token)) return true;
+  if (/^[\u4e00-\u9fff]{1,2}$/.test(token) && [...token].some((char) => stopWords.has(char))) return true;
+  for (const word of stopWords) {
+    if (word.length >= 2 && token.includes(word)) return true;
+  }
+  return false;
 }
 
 function aggregateWordCloud(items) {
@@ -167,7 +185,12 @@ async function serveStatic(req, res, pathname) {
   if (!safePath.startsWith(PUBLIC_DIR) && !safePath.startsWith(UPLOAD_DIR)) {
     return send(res, 403, "Forbidden");
   }
-  if (!existsSync(safePath)) return send(res, 404, "Not found");
+  if (!existsSync(safePath)) {
+    if (pathname === "/") {
+      return send(res, 500, "public/index.html is missing. Upload the public folder to the repository root and redeploy.");
+    }
+    return send(res, 404, "Not found");
+  }
   const extension = extname(safePath).toLowerCase();
   res.writeHead(200, { "Content-Type": mimeTypes[extension] || "application/octet-stream" });
   createReadStream(safePath).pipe(res);

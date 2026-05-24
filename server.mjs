@@ -178,6 +178,16 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
     const { pathname } = url;
 
+    if (req.method === "GET" && pathname === "/healthz") {
+      return send(res, 200, {
+        ok: true,
+        app: "word-cloud-footprints",
+        rootDir: ROOT_DIR,
+        publicDir: PUBLIC_DIR,
+        hasIndex: existsSync(join(PUBLIC_DIR, "index.html"))
+      });
+    }
+
     if (req.method === "POST" && pathname === "/api/login") {
       const { password } = await parseJson(req, 20_000);
       if (hashPassword(String(password || "")) !== expectedPasswordHash) {
@@ -263,6 +273,8 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Footprints app running on http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
+  console.log(`Public directory: ${PUBLIC_DIR}`);
+  console.log(`Index exists: ${existsSync(join(PUBLIC_DIR, "index.html"))}`);
   if (ADMIN_PASSWORD === "change-me-now") {
     console.log("Set ADMIN_PASSWORD before going live. Current local password is change-me-now");
   }

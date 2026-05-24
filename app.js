@@ -238,6 +238,17 @@ function renderShell(user) {
   }
 }
 
+function authErrorMessage(error) {
+  const messages = {
+    "auth/invalid-credential": "账号或密码不正确",
+    "auth/user-not-found": "账号不存在，请先在 Firebase Authentication 里添加这个用户",
+    "auth/wrong-password": "密码不正确",
+    "auth/unauthorized-domain": "当前网站域名还没有加入 Firebase Authorized domains",
+    "auth/too-many-requests": "尝试次数太多，请稍后再试"
+  };
+  return messages[error.code] || `登录失败：${error.message}`;
+}
+
 function listenForEntries() {
   if (state.unsubscribeEntries) state.unsubscribeEntries();
   const entriesQuery = query(collection(db, "footprints"), orderBy("writtenAt", "desc"));
@@ -313,9 +324,16 @@ loginForm.addEventListener("submit", async (event) => {
   loginError.textContent = "";
 
   try {
-    await signInWithEmailAndPassword(auth, email, password);
-  } catch {
-    loginError.textContent = "账号或密码不正确";
+    const result = await signInWithEmailAndPassword(auth, email, password);
+    if (result.user.email !== ADMIN_EMAIL) {
+      loginError.textContent = "当前账号不是管理者账号";
+      await signOut(auth);
+      return;
+    }
+    renderShell(result.user);
+    listenForEntries();
+  } catch (error) {
+    loginError.textContent = authErrorMessage(error);
   }
 });
 

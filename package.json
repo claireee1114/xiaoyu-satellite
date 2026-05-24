@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "dev": "node server.mjs"
+    "dev": "node server.mjs",
+    "postinstall": "npm rebuild nodejieba --build-from-source"
   },
   "dependencies": {
     "nodejieba": "^3.5.2"
   },
   "engines": {
-    "node": ">=20 <25"
+    "node": "20.x"
   }
 }

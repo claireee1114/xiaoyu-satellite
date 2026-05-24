@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath, URL } from "node:url";
+import nodejieba from "nodejieba";
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -171,36 +172,51 @@ function clampText(value, max = 200_000) {
   return String(value || "").trim().slice(0, max);
 }
 
+const STOP_WORDS = new Set([
+  "the", "and", "for", "with", "that", "this", "from", "are", "was", "were", "you", "your", "yours", "have", "has",
+  "had", "will", "would", "could", "should", "about", "into", "onto", "than", "then", "there", "here", "know",
+  "unknown", "once", "every", "each", "time", "again", "also", "because", "but", "not", "can", "cannot",
+  "我", "你", "他", "她", "它", "俺", "咱", "您", "人家", "我们", "你们", "他们", "她们", "它们", "咱们",
+  "我的", "你的", "他的", "她的", "它的", "我们的", "你们的", "他们的", "自己", "本人", "大家", "别人",
+  "和", "与", "及", "或", "并", "且", "而", "同", "跟", "把", "被", "对", "给", "在", "从", "到", "向",
+  "一个", "一种", "一些", "一点", "一下", "以及", "还有", "因为", "所以", "但是", "如果", "虽然", "只是",
+  "这个", "那个", "这些", "那些", "这里", "那里", "这样", "那样", "什么", "怎么", "为什么", "可以",
+  "进行", "通过", "关于", "没有", "不是", "还是", "或者", "然后", "并且", "而且", "就是", "只是",
+  "知道", "不知", "不知道", "觉得", "感觉", "认为", "一次", "每次", "时候", "需要", "已经", "可能",
+  "应该", "其实", "非常", "比较", "特别", "真的", "现在", "今天", "明天", "昨天", "每天", "每日",
+  "一起", "一直", "一边", "一会", "这次", "那次", "上次", "下次", "刚才", "后来", "以前", "以后",
+  "之前", "之后", "当时", "平时", "最近", "总是", "经常", "偶尔", "马上", "终于", "很多",
+  "东西", "事情", "问题", "内容", "文字", "地方", "方面", "部分", "情况", "过程", "结果",
+  "上传", "登录", "保存", "展示", "分析", "提取", "选取", "剔除", "运行", "打开", "点击", "复制",
+  "添加", "删除", "等待", "开始", "结束", "看到", "听到", "想到", "想要", "希望", "成为", "变成",
+  "使用", "完成", "发生", "出现", "拥有", "存在"
+]);
+
+const MEASURE_WORDS = new Set([
+  "个", "只", "条", "次", "件", "张", "位", "本", "份", "家", "年", "天", "月", "周", "小时", "分钟",
+  "秒", "遍", "种", "点", "块", "杯", "瓶", "颗", "层", "场", "段", "篇", "句", "首", "辆", "台", "部",
+  "双", "门", "口", "支", "根", "片", "朵", "把", "封", "幅", "座", "间", "套", "组", "类", "项"
+]);
+
+const CHINESE_PARTICLES = /[的一了着过吗呢吧啊呀啦嘛么]/;
+const CHINESE_NUMBER_PREFIX = /^[一二两三四五六七八九十百千万几多每半0-9]+/;
+
 function extractKeywords(text, max = 12) {
-  const stopWords = new Set([
-    "the", "and", "for", "with", "that", "this", "from", "are", "was", "were", "you", "your", "yours", "have", "has",
-    "had", "will", "would", "could", "should", "about", "into", "onto", "than", "then", "there", "here", "know",
-    "unknown", "once", "every", "each", "time", "again", "also", "because", "but", "not", "can", "cannot",
-    "我", "你", "他", "她", "它", "俺", "咱", "您", "人家", "我们", "你们", "他们", "她们", "它们", "咱们",
-    "我的", "你的", "他的", "她的", "它的", "我们的", "你们的", "他们的", "自己", "本人", "大家", "别人",
-    "和", "与", "及", "或", "并", "且", "而", "同", "跟", "把", "被", "对", "给", "在", "从", "到", "向",
-    "一个", "一种", "一些", "一点", "一下", "以及", "还有", "因为", "所以", "但是", "如果", "虽然", "只是",
-    "这个", "那个", "这些", "那些", "这里", "那里", "这样", "那样", "什么", "怎么", "为什么", "可以",
-    "进行", "通过", "关于", "没有", "不是", "还是", "或者", "然后", "并且", "而且", "就是", "只是",
-    "知道", "不知", "不知道", "觉得", "感觉", "认为", "一次", "每次", "时候", "需要", "已经", "可能",
-    "应该", "还是", "其实", "非常", "比较", "特别", "真的", "现在", "今天", "明天", "昨天", "很多",
-    "东西", "事情", "问题", "内容", "文字"
-  ]);
   const counts = new Map();
   const normalized = text.toLowerCase();
   const englishWords = normalized.match(/[a-z0-9][a-z0-9-]{2,}/g) || [];
   for (const word of englishWords) {
-    if (!isStopWord(word, stopWords)) counts.set(word, (counts.get(word) || 0) + 1);
+    if (isMeaningfulKeyword(word)) counts.set(word, (counts.get(word) || 0) + 1);
   }
 
-  const chineseRuns = normalized.match(/[\u4e00-\u9fff]{2,}/g) || [];
-  for (const run of chineseRuns) {
-    for (let size = 2; size <= 4; size += 1) {
-      for (let index = 0; index <= run.length - size; index += 1) {
-        const token = run.slice(index, index + size);
-        if (!isStopWord(token, stopWords)) counts.set(token, (counts.get(token) || 0) + (size === 2 ? 1 : 1.4));
-      }
-    }
+  const taggedWords = nodejieba.tag(text);
+  for (const item of taggedWords) {
+    const word = String(item.word || "").trim();
+    const tag = String(item.tag || "");
+    if (!isAllowedPartOfSpeech(tag)) continue;
+    if (!isMeaningfulKeyword(word)) continue;
+    const weight = tag.startsWith("n") ? 1.25 : 1;
+    counts.set(word, (counts.get(word) || 0) + weight);
   }
 
   return [...counts.entries()]
@@ -209,10 +225,31 @@ function extractKeywords(text, max = 12) {
     .map(([textValue, weight]) => ({ text: textValue, weight: Number(weight.toFixed(2)) }));
 }
 
-function isStopWord(token, stopWords) {
-  if (stopWords.has(token)) return true;
-  if (/^[\u4e00-\u9fff]{1,2}$/.test(token) && [...token].some((char) => stopWords.has(char))) return true;
-  for (const word of stopWords) {
+function isAllowedPartOfSpeech(tag) {
+  return tag.startsWith("n") || tag === "a" || tag === "an" || tag === "ag";
+}
+
+function isMeaningfulKeyword(token) {
+  if (!token || isStopWord(token)) return false;
+  if (/^[\u4e00-\u9fff]+$/.test(token)) {
+    if (token.length < 2) return false;
+    if (CHINESE_PARTICLES.test(token)) return false;
+    if (isMeasurePhrase(token)) return false;
+  }
+  return true;
+}
+
+function isMeasurePhrase(token) {
+  if (MEASURE_WORDS.has(token)) return true;
+  const withoutNumber = token.replace(CHINESE_NUMBER_PREFIX, "");
+  if (MEASURE_WORDS.has(withoutNumber)) return true;
+  return [...MEASURE_WORDS].some((word) => token.endsWith(word) && CHINESE_NUMBER_PREFIX.test(token));
+}
+
+function isStopWord(token) {
+  if (STOP_WORDS.has(token)) return true;
+  if (/^[\u4e00-\u9fff]{1,2}$/.test(token) && [...token].some((char) => STOP_WORDS.has(char))) return true;
+  for (const word of STOP_WORDS) {
     if (word.length >= 2 && token.includes(word)) return true;
   }
   return false;
@@ -222,6 +259,7 @@ function aggregateWordCloud(items) {
   const totals = new Map();
   for (const item of items) {
     for (const keyword of item.keywords || []) {
+      if (!isMeaningfulKeyword(keyword.text)) continue;
       totals.set(keyword.text, (totals.get(keyword.text) || 0) + keyword.weight);
     }
   }
@@ -283,7 +321,12 @@ async function serveSupabaseImage(req, res, pathname) {
 }
 
 async function getState() {
-  const footprints = (await readFootprints()).sort((a, b) => new Date(b.writtenAt) - new Date(a.writtenAt));
+  const footprints = (await readFootprints())
+    .map((item) => ({
+      ...item,
+      keywords: (item.keywords || []).filter((keyword) => isMeaningfulKeyword(keyword.text))
+    }))
+    .sort((a, b) => new Date(b.writtenAt) - new Date(a.writtenAt));
   return { footprints, wordCloud: aggregateWordCloud(footprints) };
 }
 

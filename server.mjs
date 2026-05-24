@@ -3,15 +3,16 @@ import { createReadStream, existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
-import { URL } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "change-me-now";
+const ROOT_DIR = fileURLToPath(new URL(".", import.meta.url));
 const DATA_DIR = resolve(process.env.DATA_DIR || "data");
 const UPLOAD_DIR = join(DATA_DIR, "uploads");
 const DB_FILE = join(DATA_DIR, "footprints.json");
-const PUBLIC_DIR = resolve("public");
+const PUBLIC_DIR = resolve(ROOT_DIR, "public");
 const sessions = new Set();
 const clients = new Set();
 
